@@ -2,7 +2,6 @@ from flask import Flask, jsonify, Response
 from http import HTTPStatus
 from typing import Tuple, Dict, Any
 from functools import wraps
-
 from cbf_scraper import BrasileiraoScraper, WebScraper, ScraperConfig
 
 app = Flask(__name__)
@@ -15,7 +14,7 @@ def handle_errors(func):
             return func(*args, **kwargs)
         except Exception as e:
             return create_error_response(
-                f"Erro ao buscar dados: {str(e)}", 
+                f"Erro ao buscar dados: {str(e)}",
                 HTTPStatus.INTERNAL_SERVER_ERROR
             )
     return wrapper
