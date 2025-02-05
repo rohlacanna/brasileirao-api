@@ -1,7 +1,6 @@
 import requests
 from bs4 import BeautifulSoup
 import json
-import sys
 from typing import Optional, Dict, Any
 from dataclasses import dataclass
 
@@ -24,8 +23,7 @@ class WebScraper:
             response = self.session.get(url)
             response.raise_for_status()
             return BeautifulSoup(response.text, 'html.parser')
-        except requests.RequestException as e:
-            self._handle_error(f"Erro ao acessar a página: {str(e)}")
+        except requests.RequestException:
             return None
 
 class BrasileiraoScraper(WebScraper):
@@ -34,42 +32,34 @@ class BrasileiraoScraper(WebScraper):
         self.ano = ano
 
     def get_champion(self) -> Dict[str, Any]:
-        try:
-            form_value = self._get_form_value()
-            if not form_value:
-                return self._create_error(f"Valor não encontrado para o ano {self.ano}")
+        form_value = self._get_form_value()
+        if not form_value:
+            return {"erro": f"Valor não encontrado para o ano {self.ano}"}
 
-            champion_data = self._get_champion_data(form_value)
-            if not champion_data:
-                return self._create_error("Dados do campeão não encontrados")
+        champion_data = self._get_champion_data(form_value)
+        if not champion_data:
+            return {"erro": "Dados do campeão não encontrados"}
 
-            return {"ano": self.ano, "campeao": champion_data}
-
-        except Exception as e:
-            return self._create_error(f"Erro inesperado: {str(e)}")
+        return {"ano": self.ano, "campeao": champion_data}
 
     def get_round_data(self, rodada: str) -> Dict[str, Any]:
-        try:
-            form_value = self._get_form_value()
-            if not form_value:
-                return self._create_error(f"Valor não encontrado para o ano {self.ano}")
+        form_value = self._get_form_value()
+        if not form_value:
+            return {"erro": f"Valor não encontrado para o ano {self.ano}"}
 
-            fase_id = self._get_fase_id(form_value)
-            if not fase_id:
-                return self._create_error("ID da fase não encontrado")
+        fase_id = self._get_fase_id(form_value)
+        if not fase_id:
+            return {"erro": "ID da fase não encontrado"}
 
-            round_data = self._get_matches_data(form_value, rodada, fase_id)
-            if not round_data:
-                return self._create_error(f"Dados da rodada {rodada} não encontrados")
+        round_data = self._get_matches_data(form_value, rodada, fase_id)
+        if not round_data:
+            return {"erro": f"Dados da rodada {rodada} não encontrados"}
 
-            return {
-                "ano": self.ano,
-                "rodada": rodada,
-                "jogos": round_data
-            }
-
-        except Exception as e:
-            return self._create_error(f"Erro inesperado: {str(e)}")
+        return {
+            "ano": self.ano,
+            "rodada": rodada,
+            "jogos": round_data
+        }
 
     def _get_form_value(self) -> Optional[str]:
         soup = self.get_page(Config.SEARCH_URL)
@@ -158,32 +148,7 @@ class BrasileiraoScraper(WebScraper):
                         "placar": placar
                     })
             
-            except Exception as e:
+            except Exception:
                 continue
 
         return matches if matches else None
-
-    @staticmethod
-    def _create_error(message: str) -> Dict[str, str]:
-        return {"erro": message}
-
-    @staticmethod
-    def _handle_error(message: str) -> None:
-        print(json.dumps({"erro": message}, ensure_ascii=False))
-
-def main():
-    if len(sys.argv) < 2:
-        print("Uso: python cbf_scraper.py <ano> [rodada]")
-        sys.exit(1)
-
-    scraper = BrasileiraoScraper(sys.argv[1])
-    
-    if len(sys.argv) == 3:
-        result = scraper.get_round_data(sys.argv[2])
-    else:
-        result = scraper.get_champion()
-        
-    print(json.dumps(result, ensure_ascii=False))
-
-if __name__ == "__main__":
-    main()
