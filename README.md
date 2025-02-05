@@ -6,7 +6,6 @@ Sistema para consulta de dados do Campeonato Brasileiro, composto por:
 - CLI para consultas via linha de comando
 
 ## Estrutura do Projeto
-```
 
 2. Criando um arquivo test.py:
 ```python
@@ -14,7 +13,7 @@ Sistema para consulta de dados do Campeonato Brasileiro, composto por:
 from cbf_scraper import BrasileiraoScraper
 
 def main():
-    scraper = BrasileiraoScraper("2023")
+    scraper = BrasileiraoScraper("2024")
     
     # Consultar campeão
     campeao = scraper.get_champion()
@@ -65,7 +64,7 @@ python server/app.py
 3. Em outro terminal, execute o cliente Go:
 ```bash
 cd client
-go run main.go -ano=2023 -rodada=38
+go run main.go -ano=2024 -rodada=38
 ```
 
 ## Funcionalidades
@@ -79,19 +78,22 @@ Endpoints disponíveis:
 Exemplos de uso:
 ```bash
 # Consultar campeão
-go run main.go -ano=2023
+go run main.go -ano=2024
 
 # Consultar rodada
-go run main.go -ano=2023 -rodada=38
+go run main.go -ano=2024 -rodada=38
 ```
 
 Exemplo de saída:
 ```bash
-Campeão do Brasileirão 2023: Palmeiras
+Campeão do Brasileirão 2024: Botafogo
 
-Jogos da rodada 38 do Brasileirão 2023:
-06/12/2023: Flamengo 2-1 São Paulo
-06/12/2023: Palmeiras 1-0 Cruzeiro
+
+Jogos da rodada 38 do Brasileirão 2024:
+
+08/12: Flamengo 2-2 Vitória
+08/12: Botafogo 2-1 São Paulo
+
 ```
 
 ### Teste Direto do Scraper (Opcional)
@@ -101,21 +103,21 @@ Duas opções para testar o scraper sem a API:
 ```python
 from cbf_scraper import BrasileiraoScraper
 
-scraper = BrasileiraoScraper("2023")
+scraper = BrasileiraoScraper("2024")
 
 # Consultar campeão
 campeao = scraper.get_champion()
-# {"ano": "2023", "campeao": "Palmeiras"}
+# {"ano": "2024", "campeao": "Botafogo"}
 
 # Consultar rodada
 jogos = scraper.get_round_data("38")
 # {
-#   "ano": "2023",
+#   "ano": "2024",
 #   "rodada": "38",
 #   "jogos": [
 #     {
-#       "data": "06/12/2023",
-#       "mandante": {"nome": "Flamengo", "gols": 2},
+#       "data": "08/12/2024",
+#       "mandante": {"nome": "Botafogo", "gols": 2},
 #       "visitante": {"nome": "São Paulo", "gols": 1},
 #       "placar": "2-1"
 #     }

@@ -1,2 +1,3 @@
-__pycache__/
+/cbf_scraper/__pycache__/
 *.pyc
+/venv
