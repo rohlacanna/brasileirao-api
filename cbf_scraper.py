@@ -1,24 +1,51 @@
+from dataclasses import dataclass, field
+from typing import Optional, Dict, Any, List
 import requests
-from bs4 import BeautifulSoup
-import json
-from typing import Optional, Dict, Any
-from dataclasses import dataclass
+from bs4 import BeautifulSoup, Tag
 
 @dataclass
-class Config:
-    BASE_URL = "https://www.ogol.com.br"
-    SEARCH_URL = f"{BASE_URL}/competicao/brasileirao?search=1"
-    HEADERS = {
+class ScraperConfig:
+    base_url: str = "https://www.ogol.com.br"
+    headers: Dict[str, str] = field(default_factory=lambda: {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
         "(KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
-    }
+    })
+
+    @property
+    def search_url(self) -> str:
+        return f"{self.base_url}/competicao/brasileirao?search=1"
+
+@dataclass
+class Match:
+    date: str
+    home_team: str
+    away_team: str
+    home_goals: int
+    away_goals: int
+    
+    @property
+    def score(self) -> str:
+        return f"{self.home_goals}-{self.away_goals}"
+    
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "data": self.date,
+            "mandante": {"nome": self.home_team, "gols": self.home_goals},
+            "visitante": {"nome": self.away_team, "gols": self.away_goals},
+            "placar": self.score
+        }
 
 class WebScraper:
-    def __init__(self):
-        self.session = requests.Session()
-        self.session.headers.update(Config.HEADERS)
+    def __init__(self, config: ScraperConfig = ScraperConfig()):
+        self.config = config
+        self.session = self._initialize_session()
+    
+    def _initialize_session(self) -> requests.Session:
+        session = requests.Session()
+        session.headers.update(self.config.headers)
+        return session
 
-    def get_page(self, url: str) -> Optional[BeautifulSoup]:
+    def get_soup(self, url: str) -> Optional[BeautifulSoup]:
         try:
             response = self.session.get(url)
             response.raise_for_status()
@@ -26,43 +53,44 @@ class WebScraper:
         except requests.RequestException:
             return None
 
-class BrasileiraoScraper(WebScraper):
-    def __init__(self, ano: str):
-        super().__init__()
-        self.ano = ano
+class BrasileiraoScraper:
+    def __init__(self, year: str, scraper: WebScraper = None):
+        self.year = year
+        self.scraper = scraper or WebScraper()
+        self.config = self.scraper.config
 
     def get_champion(self) -> Dict[str, Any]:
-        form_value = self._get_form_value()
+        form_value = self._fetch_form_value()
         if not form_value:
-            return {"erro": f"Valor não encontrado para o ano {self.ano}"}
+            return self._error_response(f"Valor não encontrado para o ano {self.year}")
 
-        champion_data = self._get_champion_data(form_value)
-        if not champion_data:
-            return {"erro": "Dados do campeão não encontrados"}
+        champion_name = self._fetch_champion_name(form_value)
+        if not champion_name:
+            return self._error_response("Dados do campeão não encontrados")
 
-        return {"ano": self.ano, "campeao": champion_data}
+        return {"ano": self.year, "campeao": champion_name}
 
-    def get_round_data(self, rodada: str) -> Dict[str, Any]:
-        form_value = self._get_form_value()
+    def get_round_data(self, round_number: str) -> Dict[str, Any]:
+        form_value = self._fetch_form_value()
         if not form_value:
-            return {"erro": f"Valor não encontrado para o ano {self.ano}"}
+            return self._error_response(f"Valor não encontrado para o ano {self.year}")
 
-        fase_id = self._get_fase_id(form_value)
-        if not fase_id:
-            return {"erro": "ID da fase não encontrado"}
+        phase_id = self._fetch_phase_id(form_value)
+        if not phase_id:
+            return self._error_response("ID da fase não encontrado")
 
-        round_data = self._get_matches_data(form_value, rodada, fase_id)
-        if not round_data:
-            return {"erro": f"Dados da rodada {rodada} não encontrados"}
+        matches = self._fetch_matches(form_value, round_number, phase_id)
+        if not matches:
+            return self._error_response(f"Dados da rodada {round_number} não encontrados")
 
         return {
-            "ano": self.ano,
-            "rodada": rodada,
-            "jogos": round_data
+            "ano": self.year,
+            "rodada": round_number,
+            "jogos": [match.to_dict() for match in matches]
         }
 
-    def _get_form_value(self) -> Optional[str]:
-        soup = self.get_page(Config.SEARCH_URL)
+    def _fetch_form_value(self) -> Optional[str]:
+        soup = self.scraper.get_soup(self.config.search_url)
         if not soup:
             return None
 
@@ -70,17 +98,22 @@ class BrasileiraoScraper(WebScraper):
         if not form:
             return None
 
-        for option in form.find_all('option'):
-            if option.text.strip() == str(self.ano):
-                return option['value']
-        return None
+        return next(
+            (option['value'] for option in form.find_all('option')
+             if option.text.strip() == str(self.year)),
+            None
+        )
 
-    def _get_champion_data(self, form_value: str) -> Optional[str]:
-        url = f"{Config.BASE_URL}/edicao/brasileirao-serie-a-{self.ano}/{form_value}"
-        soup = self.get_page(url)
+    def _fetch_champion_name(self, form_value: str) -> Optional[str]:
+        url = f"{self.config.base_url}/edicao/brasileirao-serie-a-{self.year}/{form_value}"
+        soup = self.scraper.get_soup(url)
         if not soup:
             return None
 
+        champion_cell = self._find_champion_cell(soup)
+        return champion_cell.text.strip() if champion_cell else None
+
+    def _find_champion_cell(self, soup: BeautifulSoup) -> Optional[Tag]:
         table = soup.find('div', id='edition_table')
         if not table:
             return None
@@ -89,66 +122,74 @@ class BrasileiraoScraper(WebScraper):
         if not first_row:
             return None
 
-        champion_cell = first_row.find_all('td')[2].find('a')
-        return champion_cell.text.strip() if champion_cell else None
+        return first_row.find_all('td')[2].find('a')
 
-    def _get_fase_id(self, form_value: str) -> Optional[str]:
-        url = f"{Config.BASE_URL}/edicao/brasileirao-serie-a-{self.ano}/{form_value}"
-        soup = self.get_page(url)
+    def _fetch_phase_id(self, form_value: str) -> Optional[str]:
+        url = f"{self.config.base_url}/edicao/brasileirao-serie-a-{self.year}/{form_value}"
+        soup = self.scraper.get_soup(url)
         if not soup:
             return None
 
-        fase_input = soup.find('input', {'name': 'fase'})
-        return fase_input.get('value') if fase_input else None
+        phase_input = soup.find('input', {'name': 'fase'})
+        return phase_input.get('value') if phase_input else None
 
-    def _get_matches_data(self, form_value: str, rodada: str, fase_id: str) -> Optional[list]:
-        url = f"{Config.BASE_URL}/edicao/campeonato-brasileiro-{self.ano}/{form_value}?jornada_in={rodada}&fase={fase_id}"
-        
-        soup = self.get_page(url)
+    def _fetch_matches(self, form_value: str, round_number: str, phase_id: str) -> Optional[List[Match]]:
+        url = self._build_matches_url(form_value, round_number, phase_id)
+        soup = self.scraper.get_soup(url)
         if not soup:
             return None
 
-        fixture_div = soup.find('div', id='fixture_games')
-        if not fixture_div:
-            return None
+        return self._parse_matches_table(soup)
 
-        games_table = fixture_div.find('table', class_='zztable stats')
+    def _build_matches_url(self, form_value: str, round_number: str, phase_id: str) -> str:
+        return f"{self.config.base_url}/edicao/campeonato-brasileiro-{self.year}/{form_value}?jornada_in={round_number}&fase={phase_id}"
+
+    def _parse_matches_table(self, soup: BeautifulSoup) -> Optional[List[Match]]:
+        games_table = self._find_games_table(soup)
         if not games_table:
             return None
 
         matches = []
-        last_date = None
-        
+        current_date = None
+
         for row in games_table.find_all('tr'):
-            try:
-                cells = row.find_all('td')
-                if len(cells) < 6:
-                    continue
-                
-                date_text = cells[0].text.strip()
-                if date_text:
-                    last_date = date_text
-                
-                mandante = cells[1].find('a').text.strip()
-                placar = cells[3].find('a').text.strip()
-                visitante = cells[5].find('a').text.strip()
-                
-                if mandante and visitante and placar and '-' in placar:
-                    gols = placar.split('-')
-                    matches.append({
-                        "data": last_date,
-                        "mandante": {
-                            "nome": mandante,
-                            "gols": int(gols[0].strip())
-                        },
-                        "visitante": {
-                            "nome": visitante,
-                            "gols": int(gols[1].strip())
-                        },
-                        "placar": placar
-                    })
-            
-            except Exception:
-                continue
+            match = self._parse_match_row(row, current_date)
+            if match:
+                matches.append(match)
+                current_date = match.date
 
         return matches if matches else None
+
+    def _find_games_table(self, soup: BeautifulSoup) -> Optional[Tag]:
+        fixture_div = soup.find('div', id='fixture_games')
+        if not fixture_div:
+            return None
+        return fixture_div.find('table', class_='zztable stats')
+
+    def _parse_match_row(self, row: Tag, current_date: str) -> Optional[Match]:
+        try:
+            cells = row.find_all('td')
+            if len(cells) < 6:
+                return None
+
+            date = cells[0].text.strip() or current_date
+            if not date:
+                return None
+
+            home_team = cells[1].find('a').text.strip()
+            score = cells[3].find('a').text.strip()
+            away_team = cells[5].find('a').text.strip()
+
+            if not (home_team and away_team and score and '-' in score):
+                return None
+
+            home_goals, away_goals = map(lambda x: int(x.strip()), score.split('-'))
+            
+            return Match(date, home_team, away_team, home_goals, away_goals)
+
+        except (AttributeError, ValueError, IndexError):
+            return None
+
+    @staticmethod
+    def _error_response(message: str) -> Dict[str, str]:
+        return {"erro": message}

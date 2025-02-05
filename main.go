@@ -9,114 +9,175 @@ import (
 	"os"
 )
 
-type Time struct {
-	Nome string `json:"nome"`
-	Gols int    `json:"gols"`
+const (
+	baseURL  = "http://localhost:8000"
+	usageMsg = "Uso: go run main.go -ano=2023 [-rodada=37]"
+	helpMsg  = "Se a rodada não for informada, mostra o campeão do ano"
+)
+
+type Team struct {
+	Name  string `json:"nome"`
+	Goals int    `json:"gols"`
 }
 
-type Jogo struct {
-	Data      string `json:"data"`
-	Mandante  Time   `json:"mandante"`
-	Visitante Time   `json:"visitante"`
-	Placar    string `json:"placar"`
+type Match struct {
+	Date     string `json:"data"`
+	HomeTeam Team   `json:"mandante"`
+	AwayTeam Team   `json:"visitante"`
+	Score    string `json:"placar"`
 }
 
-type Rodada struct {
-	Ano    string `json:"ano"`
-	Rodada string `json:"rodada"`
-	Jogos  []Jogo `json:"jogos"`
+type Round struct {
+	Year    string  `json:"ano"`
+	Number  string  `json:"rodada"`
+	Matches []Match `json:"jogos"`
 }
 
-type Campeao struct {
-	Ano     string `json:"ano"`
-	Campeao string `json:"campeao"`
+type Champion struct {
+	Year         string `json:"ano"`
+	ChampionTeam string `json:"campeao"`
 }
 
-type ErroResponse struct {
-	Erro string `json:"erro"`
+type ErrorResponse struct {
+	Message string `json:"erro"`
 }
 
-func getJogos(ano, rodada string) (*Rodada, error) {
-	url := fmt.Sprintf("http://localhost:8000/jogos/%s/%s", ano, rodada)
-	return fazerRequisicao[Rodada](url)
+type APIClient struct {
+	client *http.Client
 }
 
-func getCampeao(ano string) (*Campeao, error) {
-	url := fmt.Sprintf("http://localhost:8000/campeao/%s", ano)
-	return fazerRequisicao[Campeao](url)
+func NewAPIClient() *APIClient {
+	return &APIClient{
+		client: &http.Client{},
+	}
 }
 
-func fazerRequisicao[T any](url string) (*T, error) {
-	resp, err := http.Get(url)
+func (c *APIClient) GetMatches(year, round string) (*Round, error) {
+	url := fmt.Sprintf("%s/jogos/%s/%s", baseURL, year, round)
+	result := &Round{}
+	err := c.makeRequest(url, result)
+	return result, err
+}
+
+func (c *APIClient) GetChampion(year string) (*Champion, error) {
+	url := fmt.Sprintf("%s/campeao/%s", baseURL, year)
+	result := &Champion{}
+	err := c.makeRequest(url, result)
+	return result, err
+}
+
+func (c *APIClient) makeRequest(url string, result interface{}) error {
+	resp, err := c.client.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("erro ao fazer requisição: %v", err)
+		return fmt.Errorf("request error: %v", err)
 	}
 	defer resp.Body.Close()
 
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("erro ao ler resposta: %v", err)
+		return fmt.Errorf("response read error: %v", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		var erroResp ErroResponse
-		if err := json.Unmarshal(body, &erroResp); err != nil {
-			return nil, fmt.Errorf("erro desconhecido do servidor")
-		}
-		return nil, fmt.Errorf(erroResp.Erro)
+		return c.handleErrorResponse(body)
 	}
 
-	var data T
-	if err := json.Unmarshal(body, &data); err != nil {
-		return nil, fmt.Errorf("erro ao decodificar JSON: %v", err)
-	}
-
-	return &data, nil
+	return json.Unmarshal(body, result)
 }
 
-func main() {
-	ano := flag.String("ano", "", "ano do campeonato (ex: 2023)")
-	rodada := flag.String("rodada", "", "número da rodada (ex: 37)")
-	flag.Parse()
-
-	if *ano == "" {
-		fmt.Println("Uso: go run main.go -ano=2023 [-rodada=37]")
-		fmt.Println("Se a rodada não for informada, mostra o campeão do ano")
-		os.Exit(1)
+func (c *APIClient) handleErrorResponse(body []byte) error {
+	var errorResp ErrorResponse
+	if err := json.Unmarshal(body, &errorResp); err != nil {
+		return fmt.Errorf("unknown server error")
 	}
+	return fmt.Errorf(errorResp.Message)
+}
 
-	if *rodada == "" {
-		campeao, err := getCampeao(*ano)
-		if err != nil {
-			fmt.Printf("%v\n", err)
-			os.Exit(0)
-		}
-		if campeao.Campeao == "" {
-			fmt.Printf("Ainda não houve campeão para o Brasileirão %s\n", *ano)
-			os.Exit(0)
-		}
-		fmt.Printf("Campeão do Brasileirão %s: %s\n", campeao.Ano, campeao.Campeao)
+func (c *APIClient) decodeJSON(data []byte, result interface{}) error {
+	if err := json.Unmarshal(data, result); err != nil {
+		return fmt.Errorf("JSON decode error: %v", err)
+	}
+	return nil
+}
+
+type CLIHandler struct {
+	client *APIClient
+}
+
+func NewCLIHandler(client *APIClient) *CLIHandler {
+	return &CLIHandler{client: client}
+}
+
+func (h *CLIHandler) Run() {
+	year, round := h.parseFlags()
+
+	if round == "" {
+		h.handleChampionQuery(year)
 		return
 	}
 
-	dados, err := getJogos(*ano, *rodada)
+	h.handleRoundQuery(year, round)
+}
+
+func (h *CLIHandler) parseFlags() (string, string) {
+	year := flag.String("ano", "", "ano do campeonato (ex: 2023)")
+	round := flag.String("rodada", "", "número da rodada (ex: 37)")
+	flag.Parse()
+
+	if *year == "" {
+		fmt.Println(usageMsg)
+		fmt.Println(helpMsg)
+		os.Exit(1)
+	}
+
+	return *year, *round
+}
+
+func (h *CLIHandler) handleChampionQuery(year string) {
+	champion, err := h.client.GetChampion(year)
+	if err != nil {
+		fmt.Printf("%v\n", err)
+		os.Exit(0)
+	}
+
+	if champion.ChampionTeam == "" {
+		fmt.Printf("Ainda não houve campeão para o Brasileirão %s\n", year)
+		os.Exit(0)
+	}
+
+	fmt.Printf("Campeão do Brasileirão %s: %s\n", champion.Year, champion.ChampionTeam)
+}
+
+func (h *CLIHandler) handleRoundQuery(year, round string) {
+	data, err := h.client.GetMatches(year, round)
 	if err != nil {
 		fmt.Printf("Erro: %v\n", err)
 		os.Exit(1)
 	}
 
-	if len(dados.Jogos) == 0 {
-		fmt.Printf("Ainda não há jogos disponíveis para o Brasileirão %s\n", *ano)
+	if len(data.Matches) == 0 {
+		fmt.Printf("Ainda não há jogos disponíveis para o Brasileirão %s\n", year)
 		os.Exit(0)
 	}
 
-	fmt.Printf("Jogos da rodada %s do Brasileirão %s:\n\n", dados.Rodada, dados.Ano)
-	for _, jogo := range dados.Jogos {
+	h.displayMatches(data)
+}
+
+func (h *CLIHandler) displayMatches(data *Round) {
+	fmt.Printf("Jogos da rodada %s do Brasileirão %s:\n\n", data.Number, data.Year)
+
+	for _, match := range data.Matches {
 		fmt.Printf("%s: %s %s %s\n",
-			jogo.Data,
-			jogo.Mandante.Nome,
-			jogo.Placar,
-			jogo.Visitante.Nome,
+			match.Date,
+			match.HomeTeam.Name,
+			match.Score,
+			match.AwayTeam.Name,
 		)
 	}
+}
+
+func main() {
+	client := NewAPIClient()
+	handler := NewCLIHandler(client)
+	handler.Run()
 }
